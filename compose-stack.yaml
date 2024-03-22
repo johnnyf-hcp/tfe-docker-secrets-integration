@@ -1,0 +1,90 @@
+---
+# name: terraform-enterprise <- the `name` top level element is not allowed in swarm mode
+# deploy with `docker stack deploy --compose-file <compose-filename> <stack-name>`
+# inspect logs with `docker service logs <stack-name>_tfe` OR docker ps -> docker logs <container-id>
+# shutdown with `docker stack rm <stack-name>`
+services:
+  tfe:
+    image: images.releases.hashicorp.com/hashicorp/terraform-enterprise:v202401-2
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "for secret in /run/secrets/*; do export $$(basename $$secret)=$$(cat $$secret); done; /usr/local/bin/supervisord-run",
+      ]
+    environment:
+      TFE_HOSTNAME: "<hostname>"
+      TFE_OPERATIONAL_MODE: "external"
+      # see https://support.hashicorp.com/hc/en-us/articles/21560744199571-Terraform-Enterprise-FDO-failed-fetching-Terraform on the prefix for terraform-enterpsrise
+      # TFE_DISK_CACHE_VOLUME_NAME: ${COMPOSE_PROJECT_NAME}_terraform-enterprise-cache
+      # COMPOSE_PROJECT_NAME is `terraform-enterprise` by default
+      # since the name is not allowed in swarm mode, we have to hardcode the name
+      # ** Debugging notes:
+      # `terraform-enterprise-cache` results in write permissions error (Don't know why...)
+      # `_terraform-enterprise-cache` results in docker complaining about the volume name (cannot start with `_`)
+      # `terraform-enterprise_terraform-enterprise-cache` is the only one that works
+      TFE_DISK_CACHE_VOLUME_NAME: "terraform-enterprise_terraform-enterprise-cache"
+      TFE_TLS_CERT_FILE: "/etc/ssl/private/terraform-enterprise/cert.pem"
+      TFE_TLS_KEY_FILE: "/etc/ssl/private/terraform-enterprise/key.pem"
+      TFE_TLS_CA_BUNDLE_FILE: "/etc/ssl/private/terraform-enterprise/bundle.pem"
+      TFE_DATABASE_NAME: "<database-name>"
+      TFE_DATABASE_PARAMETERS: "sslmode=require"
+      TFE_OBJECT_STORAGE_TYPE: "s3"
+      TFE_OBJECT_STORAGE_S3_REGION: "<s3-region>"
+      TFE_OBJECT_STORAGE_S3_BUCKET: "<s3-bucket-name>"
+    cap_add:
+      - IPC_LOCK
+    read_only: true
+    # "The --tmpfs flag cannot be used with swarm services. You must use --mount." - https://docs.docker.com/storage/tmpfs/
+    # tmpfs:
+    #   - /tmp:mode=01777
+    #   - /run
+    #   - /var/log/terraform-enterprise
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /run/docker.sock
+      - type: bind
+        source: ./certs
+        target: /etc/ssl/private/terraform-enterprise
+      - type: volume
+        source: terraform-enterprise-cache
+        target: /var/cache/tfe-task-worker/terraform
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 01777
+          # mentioned in https://github.com/docker/cli/issues/1285
+          # solution in https://github.com/compose-spec/compose-spec/issues/176
+      - type: tmpfs
+        target: /run
+      - type: tmpfs
+        target: /var/log/terraform-enterprise
+    secrets:
+      - TFE_LICENSE
+      - TFE_ENCRYPTION_PASSWORD
+      - TFE_DATABASE_HOST
+      - TFE_DATABASE_USER
+      - TFE_DATABASE_PASSWORD
+      - TFE_OBJECT_STORAGE_S3_ACCESS_KEY_ID
+      - TFE_OBJECT_STORAGE_S3_SECRET_ACCESS_KEY
+secrets:
+  TFE_LICENSE:
+    external: true
+  TFE_ENCRYPTION_PASSWORD:
+    external: true
+  TFE_DATABASE_HOST:
+    external: true
+  TFE_DATABASE_USER:
+    external: true
+  TFE_DATABASE_PASSWORD:
+    external: true
+  TFE_OBJECT_STORAGE_S3_ACCESS_KEY_ID:
+    external: true
+  TFE_OBJECT_STORAGE_S3_SECRET_ACCESS_KEY:
+    external: true
+volumes:
+  terraform-enterprise-cache:
